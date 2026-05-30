@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>My Money, Made Simple</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+  <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+  <script src="https://unpkg.com/lucide@0.379.0/dist/umd/lucide.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    // Extract hooks and components from global window objects
+    const { useState, useEffect, useRef } = React;
+    const { BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, LabelList, Legend, Cell } = Recharts;
+    
+    // Destructure Lucide icons from the global object
+    const { 
+      Home, Zap, ShoppingCart, Bus, HeartPulse, Coffee,
+      Wallet, PiggyBank, TrendingUp, Plus, Delete, Check,
+      Pencil, Sparkles, Clock, RotateCcw, X 
+    } = lucide;
+
+    /* ============================================================
+       STORAGE (Swapped to localStorage so it works directly)
+       ============================================================ */
+    const SKEY = "moms-budget-v1";
+    function loadSaved() {
+      try {
+        const r = localStorage.getItem(SKEY);
+        return r ? JSON.parse(r) : null;
+      } catch (e) {
+        return null;
+      }
+    }
+    function persist(obj) {
+      try {
+        localStorage.setItem(SKEY, JSON.stringify(obj));
+      } catch (e) {}
+    }
+
+    const THEMES = {
+      maple: {
+        name: "Maple Wood", bg: "#F6EDDF", panel: "#FFFFFF", panelAlt: "#FBF3E6", ink: "#3A2A1C", inkSoft: "#7C6A56",
+        accent: "#B5532A", accentDeep: "#8C3A1E", accentSoft: "#EAD3B6", good: "#6F8B33", warn: "#C0421F", line: "#E7D6BF", dot: "#B5532A",
+        bars: ["#D49255", "#B5532A"],
+      },
+      sage: {
+        name: "Sage Garden", bg: "#EAEFE0", panel: "#FFFFFF", panelAlt: "#F2F5EA", ink: "#26331F", inkSoft: "#5C6A50",
+        accent: "#54793F", accentDeep: "#3C5A2C", accentSoft: "#CBDAB4", good: "#4E7F4E", warn: "#B0531F", line: "#D8E1C6", dot: "#54793F",
+        bars: ["#8FAE6B", "#54793F"],
+      },
+      slate: {
+        name: "Cozy Slate", bg: "#E7ECF1", panel: "#FFFFFF", panelAlt: "#EFF3F8", ink: "#1F2B36", inkSoft: "#54626F",
+        accent: "#3E6B8C", accentDeep: "#2C5070", accentSoft: "#C3D6E4", good: "#3E8C6B", warn: "#B0531F", line: "#D5DEE7", dot: "#3E6B8C",
+        bars: ["#7AA0BC", "#3E6B8C"],
+      },
+    };
+
+    const ICONS = { Home, Zap, ShoppingCart, Bus, HeartPulse, Coffee };
+
+    const DEFAULT_DATA = {
+      income: [
+        { id: "pension",  label: "Government Pension", note: "Comes in every month, guaranteed", amount: 1700, enabled: true },
+        { id: "parttime", label: "Part-Time Work",     note: "Changes month to month",          amount: 800,  enabled: true },
+      ],
+      expenses: [
+        { id: "housing",   label: "Housing / Rent",   icon: "Home",         budget: 1500, spent: 1500, enabled: true },
+        { id: "utilities", label: "Utilities",        icon: "Zap",          budget: 220,  spent: 165,  enabled: true },
+        { id: "groceries", label: "Groceries",        icon: "ShoppingCart", budget: 460,  spent: 380,  enabled: true },
+        { id: "transport", label: "Transportation",   icon: "Bus",          budget: 130,  spent: 95,   enabled: true },
+        { id: "health",    label: "Health",           icon: "HeartPulse",   budget: 160,  spent: 90,   enabled: true },
+        { id: "leisure",   label: "Leisure & Fun",    icon: "Coffee",       budget: 130,  spent: 70,   enabled: true },
+      ],
+      hourlyRate: 22,
+    };
+
+    const FALLBACK_RATE = 0.72;
+
+    function NameInput({ value, onChange, t, style }) {
+      const [hover, setHover] = useState(false);
+      return (
+        <span
+          style={{ position: "relative", display: "inline-flex", alignItems: "center", gap: 6 }}
+          onMouseEnter={() => setHover(true)}
+          onMouseLeave={() => setHover(false)}
+        >
+          <input
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            title="Tap to rename"
+            style={{
+              background: "transparent", border: "none",
+              borderBottom: `2px dashed ${hover ? t.accentSoft : "transparent"}`,
+              color: t.ink, fontFamily: "inherit", fontWeight: 700, padding: "1px 2px", outline: "none",
+              width: `${Math.max(value.length + 1, 4)}ch`, maxWidth: "100%", ...style,
+            }}
+            onFocus={(e) => (e.target.style.borderBottom = `2px solid ${t.accent}`)}
+            onBlur={(e) => (e.target.style.borderBottom = `2px dashed transparent`)}
+          />
+          <Pencil size={15} color={t.inkSoft} style={{ opacity: hover ? 0.8 : 0.35, flexShrink: 0 }} />
+        </span>
+      );
+    }
+
+    function MoneyInput({ cad, onChangeCad, toDisplay, fromDisplay, t, fontSize = 26 }) {
+      const [editing, setEditing] = useState(false);
+      const [draft, setDraft] = useState("");
+      const shown = editing ? draft : Math.round(toDisplay(cad)).toLocaleString();
+      return (
+        <span style={{ display: "inline-flex", alignItems: "baseline", gap: 2 }}>
+          <span style={{ fontSize: fontSize * 0.72, fontWeight: 700, color: t.inkSoft }}>$</span>
+          <input
+            inputMode="decimal" value={shown}
+            onFocus={() => { setEditing(true); setDraft(String(Math.round(toDisplay(cad)))); }}
+            onChange={(e) => setDraft(e.target.value.replace(/[^0-9.]/g, ""))}
+            onBlur={() => {
+              setEditing(false);
+              const n = parseFloat(draft);
+              if (!isNaN(n)) onChangeCad(fromDisplay(n));
+            }}
+            onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+            style={{
+              background: "transparent", border: "none", outline: "none",
+              color: t.ink, fontFamily: "inherit", fontWeight: 700,
+              fontSize, width: `${Math.max(shown.length, 3) + 0.5}ch`, padding: 0,
+            }}
+          />
+        </span>
+      );
+    }
+
+    function Pill({ active, onClick, children, t }) {
+      return (
+        <button
+          onClick={onClick}
+          style={{
+            minHeight: 56, padding: "0 22px", borderRadius: 16,
+            border: `2px solid ${active ? t.accent : t.line}`,
+            background: active ? t.accent : t.panel, color: active ? "#fff" : t.inkSoft,
+            fontFamily: "inherit", fontWeight: 700, fontSize: 19,
+            display: "flex", alignItems: "center", gap: 8, cursor: "pointer",
+            boxShadow: active ? "0 4px 14px rgba(0,0,0,0.12)" : "none", transition: "all .15s ease",
+          }}
+        >
+          {children}
+        </button>
+      );
+    }
+
+    function App() {
+      const [data, setData] = useState(DEFAULT_DATA);
+      const [theme, setTheme] = useState("maple");
+      const [currency, setCurrency] = useState("CAD");
+      const [view, setView] = useState("flow");
+      const [hydrated, setHydrated] = useState(false);
+      const [rate, setRate] = useState(FALLBACK_RATE);
+      const [rateLive, setRateLive] = useState(false);
+      const [extraHours, setExtraHours] = useState(5);
+      const [extraGroceries, setExtraGroceries] = useState(40);
+      const [logOpen, setLogOpen] = useState(false);
+
+      const t = THEMES[theme];
+
+      useEffect(() => {
+        const s = loadSaved();
+        if (s) {
+          if (s.data) setData(s.data);
+          if (s.theme && THEMES[s.theme]) setTheme(s.theme);
+          if (s.currency) setCurrency(s.currency);
+        }
+        setHydrated(true);
+      }, []);
+
+      useEffect(() => {
+        if (hydrated) persist({ data, theme, currency });
+      }, [data, theme, currency, hydrated]);
+
+      useEffect(() => {
+        let cancelled = false;
+        fetch("https://open.er-api.com/v6/latest/CAD")
+          .then((r) => r.json())
+          .then((d) => {
+            if (!cancelled && d && d.rates && typeof d.rates.USD === "number") {
+              setRate(d.rates.USD);
+              setRateLive(true);
+            }
+          })
+          .catch(() => {});
+        return () => { cancelled = true; };
+      }, []);
+
+      useEffect(() => {
+        const id = "moms-budget-fonts";
+        if (!document.getElementById(id)) {
+          const l = document.createElement("link");
+          l.id = id; l.rel = "stylesheet";
+          l.href = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Atkinson+Hyperlegible:wght@400;700&display=swap";
+          document.head.appendChild(l);
+        }
+      }, []);
+
+      const toDisplay = (cad) => (currency === "USD" ? cad * rate : cad);
+      const fromDisplay = (v) => (currency === "USD" ? v / rate : v);
+      const money = (cad) => "$" + Math.round(toDisplay(cad)).toLocaleString();
+
+      const setIncome = (id, patch) =>
+        setData((d) => ({ ...d, income: d.income.map((i) => (i.id === id ? { ...i, ...patch } : i)) }));
+      const setExpense = (id, patch) =>
+        setData((d) => ({ ...d, expenses: d.expenses.map((e) => (e.id === id ? { ...e, ...patch } : e)) }));
+
+      const incomeTotal = data.income.filter((i) => i.enabled).reduce((s, i) => s + (+i.amount || 0), 0);
+      const billsTotal = data.expenses.filter((e) => e.enabled).reduce((s, e) => s + (+e.budget || 0), 0);
+      const spentTotal = data.expenses.filter((e) => e.enabled).reduce((s, e) => s + (+e.spent || 0), 0);
+      const cushion = incomeTotal - spentTotal;
+
+      const fontHead = 'Fraunces, Georgia, "Times New Roman", serif';
+      const fontBody = '"Atkinson Hyperlegible", system-ui, sans-serif';
+
+      return (
+        <div style={{ minHeight: "100vh", fontFamily: fontBody, color: t.ink, fontSize: 18, background: `radial-gradient(1200px 600px at 80% -5%, ${t.accentSoft}66, transparent 60%), ${t.bg}`, transition: "background .3s ease" }}>
+          <div style={{ maxWidth: 860, margin: "0 auto", padding: "20px 16px 60px" }}>
+            <header style={{ display: "flex", flexWrap: "wrap", gap: 16, justifyContent: "space-between", alignItems: "center", marginBottom: 22 }}>
+              <div>
+                <h1 style={{ fontFamily: fontHead, fontSize: 34, fontWeight: 700, margin: 0, lineHeight: 1.1 }}>My Money, Made Simple</h1>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12 }}>
+                  <span style={{ color: t.inkSoft, fontSize: 16 }}>Look &amp; feel:</span>
+                  {Object.entries(THEMES).map(([key, th]) => (
+                    <button key={key} onClick={() => setTheme(key)} title={th.name} aria-label={th.name} style={{ width: 34, height: 34, borderRadius: "50%", background: th.dot, cursor: "pointer", border: theme === key ? `3px solid ${t.ink}` : `3px solid #ffffff`, boxShadow: "0 2px 6px rgba(0,0,0,.18)", transform: theme === key ? "scale(1.12)" : "scale(1)", transition: "transform .15s ease" }} />
+                  ))}
+                  <span style={{ color: t.inkSoft, fontSize: 16 }}>{t.name}</span>
+                </div>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
+                <div style={{ display: "inline-flex", background: t.panel, padding: 6, borderRadius: 20, border: `2px solid ${t.line}`, boxShadow: "0 4px 14px rgba(0,0,0,0.08)" }}>
+                  {[{ c: "CAD", flag: "🇨🇦" }, { c: "USD", flag: "🇺🇸" }].map(({ c, flag }) => (
+                    <button key={c} onClick={() => setCurrency(c)} style={{ minHeight: 54, padding: "0 22px", borderRadius: 15, border: "none", cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 21, display: "flex", alignItems: "center", gap: 8, background: currency === c ? t.accent : "transparent", color: currency === c ? "#fff" : t.inkSoft, transition: "all .15s ease" }}>
+                      <span style={{ fontSize: 24 }}>{flag}</span> {c}
+                    </button>
+                  ))}
+                </div>
+                <span style={{ fontSize: 15, color: t.inkSoft, background: t.panelAlt, padding: "5px 12px", borderRadius: 999, border: `1px solid ${t.line}`, display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ width: 9, height: 9, borderRadius: "50%", background: rateLive ? t.good : t.inkSoft, display: "inline-block" }} />
+                  {rateLive ? "Live rate" : "Standard rate"}: 1 CAD = ${rate.toFixed(2)} USD
+                </span>
+              </div>
+            </header>
+
+            <nav style={{ display: "flex", gap: 12, marginBottom: 24 }}>
+              <Pill active={view === "flow"} onClick={() => setView("flow")} t={t}><Wallet size={22} /> My Monthly Flow</Pill>
+              <Pill active={view === "stretch"} onClick={() => setView("stretch")} t={t}><TrendingUp size={22} /> Hours &amp; Savings</Pill>
+            </nav>
+
+            {view === "flow" ? (
+              <FlowView t={t} fontHead={fontHead} data={data} currency={currency} money={money} toDisplay={toDisplay} fromDisplay={fromDisplay} incomeTotal={incomeTotal} billsTotal={billsTotal} cushion={cushion} setIncome={setIncome} setExpense={setExpense} onLog={() => setLogOpen(true)} />
+            ) : (
+              <StretchView t={t} fontHead={fontHead} data={data} currency={currency} money={money} toDisplay={toDisplay} fromDisplay={fromDisplay} cushion={cushion} setData={setData} extraHours={extraHours} setExtraHours={setExtraHours} extraGroceries={extraGroceries} setExtraGroceries={setExtraGroceries} />
+            )}
+
+            <footer style={{ marginTop: 40, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+              <span style={{ color: t.inkSoft, fontSize: 15, display: "inline-flex", alignItems: "center", gap: 7 }}><Check size={16} color={t.good} /> Everything you type is saved automatically on this device.</span>
+              <button onClick={() => { if (window.confirm("Start fresh? This clears numbers and names.")) setData(DEFAULT_DATA); }} style={{ background: "transparent", border: `1.5px solid ${t.line}`, color: t.inkSoft, borderRadius: 12, padding: "10px 16px", cursor: "pointer", fontFamily: "inherit", fontSize: 15, display: "inline-flex", alignItems: "center", gap: 7 }}><RotateCcw size={16} /> Start fresh</button>
+            </footer>
+          </div>
+
+          {logOpen && (
+            <LogModal t={t} fontHead={fontHead} data={data} currency={currency} toDisplay={toDisplay} fromDisplay={fromDisplay} onClose={() => setLogOpen(false)} onAdd={(catId, cadAmount) => { setExpense(catId, { spent: (data.expenses.find((e) => e.id === catId)?.spent || 0) + cadAmount }); setLogOpen(false); }} />
+          )}
+        </div>
+      );
+    }
+
+    function FlowView({ t, fontHead, data, currency, money, toDisplay, fromDisplay, incomeTotal, billsTotal, cushion, setIncome, setExpense, onLog }) {
+      const cardBase = { background: t.panel, borderRadius: 22, padding: "20px 22px", border: `1.5px solid ${t.line}`, boxShadow: "0 6px 20px rgba(0,0,0,0.05)" };
+      return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 14 }}>
+            <div style={cardBase}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, color: t.inkSoft, fontSize: 16 }}><Wallet size={20} color={t.accent} /> This Month's Income</div>
+              <div style={{ fontFamily: fontHead, fontSize: 38, fontWeight: 700, marginTop: 6 }}>{money(incomeTotal)}</div>
+              <div style={{ fontSize: 14, color: t.inkSoft }}>{currency}</div>
+            </div>
+            <div style={cardBase}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, color: t.inkSoft, fontSize: 16 }}><Home size={20} color={t.accent} /> Total Fixed Bills</div>
+              <div style={{ fontFamily: fontHead, fontSize: 38, fontWeight: 700, marginTop: 6 }}>{money(billsTotal)}</div>
+              <div style={{ fontSize: 14, color: t.inkSoft }}>{currency} planned</div>
+            </div>
+          </div>
+
+          <div style={{ background: `linear-gradient(135deg, ${t.accent}, ${t.accentDeep})`, borderRadius: 26, padding: "26px 26px", color: "#fff", boxShadow: `0 14px 34px ${t.accent}55`, position: "relative", overflow: "hidden" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 19, opacity: 0.95 }}><PiggyBank size={26} /> Your Leftover Cash Cushion This Month</div>
+            <div style={{ fontFamily: fontHead, fontSize: 64, fontWeight: 700, lineHeight: 1.05, marginTop: 6 }}>{money(cushion)}</div>
+            <div style={{ fontSize: 17, opacity: 0.95, marginTop: 4 }}>That's your income minus what you've spent so far.</div>
+            <div style={{ marginTop: 14, display: "inline-flex", alignItems: "center", gap: 8, background: "#ffffff26", padding: "10px 16px", borderRadius: 14, fontSize: 17, fontWeight: 700 }}><Sparkles size={20} />{cushion > 0 ? `Wonderful — you've kept ${money(cushion)} safe!` : cushion === 0 ? "You're right on track." : "A little tight this month."}</div>
+          </div>
+
+          <section style={cardBase}>
+            <h2 style={{ fontFamily: fontHead, fontSize: 24, fontWeight: 700, margin: "0 0 4px" }}>Money Coming In</h2>
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              {data.income.map((item, idx) => (
+                <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", background: t.panelAlt, borderRadius: 16, padding: "14px 16px", border: `1.5px solid ${t.line}`, opacity: item.enabled ? 1 : 0.5 }}>
+                  <input type="checkbox" checked={item.enabled} onChange={(e) => setIncome(item.id, { enabled: e.target.checked })} style={{ width: 26, height: 26, accentColor: t.accent, cursor: "pointer" }} />
+                  <div style={{ flex: 1, minWidth: 160 }}>
+                    <NameInput value={item.label} onChange={(v) => setIncome(item.id, { label: v })} t={t} style={{ fontSize: 20 }} />
+                    <div style={{ fontSize: 14, color: t.inkSoft, marginTop: 2 }}>{item.note}</div>
+                  </div>
+                  <MoneyInput cad={item.amount} onChangeCad={(v) => setIncome(item.id, { amount: v })} toDisplay={toDisplay} fromDisplay={fromDisplay} t={t} fontSize={28} />
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section style={cardBase}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 6 }}>
+              <h2 style={{ fontFamily: fontHead, fontSize: 24, fontWeight: 700, margin: 0 }}>Money Going Out</h2>
+              <button onClick={onLog} style={{ minHeight: 56, padding: "0 22px", borderRadius: 16, border: "none", cursor: "pointer", background: t.accent, color: "#fff", fontFamily: "inherit", fontWeight: 700, fontSize: 19, display: "inline-flex", alignItems: "center", gap: 10, boxShadow: `0 6px 18px ${t.accent}55` }}><Plus size={24} /> Log a Receipt</button>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              {data.expenses.map((e) => {
+                const Icon = ICONS[e.icon] || Coffee;
+                const pct = e.budget > 0 ? e.spent / e.budget : 0;
+                const over = pct > 1;
+                return (
+                  <div key={e.id} style={{ background: t.panelAlt, borderRadius: 16, padding: "14px 16px", border: `1.5px solid ${t.line}`, opacity: e.enabled ? 1 : 0.45 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                      <input type="checkbox" checked={e.enabled} onChange={(ev) => setExpense(e.id, { enabled: ev.target.checked })} style={{ width: 26, height: 26, accentColor: t.accent, cursor: "pointer" }} />
+                      <span style={{ width: 46, height: 46, borderRadius: 14, background: t.accentSoft, display: "flex", alignItems: "center", justifyContent: "center" }}><Icon size={26} color={t.accentDeep} /></span>
+                      <div style={{ flex: 1, minWidth: 130, fontSize: 20 }}><NameInput value={e.label} onChange={(v) => setExpense(e.id, { label: v })} t={t} style={{ fontSize: 20 }} /></div>
+                      <div style={{ textAlign: "right" }}>
+                        <div style={{ display: "flex", alignItems: "baseline", gap: 4, justifyContent: "flex-end" }}>
+                          <MoneyInput cad={e.spent} onChangeCad={(v) => setExpense(e.id, { spent: v })} toDisplay={toDisplay} fromDisplay={fromDisplay} t={t} fontSize={24} />
+                          <span style={{ color: t.inkSoft, fontSize: 17 }}>of</span>
+                          <MoneyInput cad={e.budget} onChangeCad={(v) => setExpense(e.id, { budget: v })} toDisplay={toDisplay} fromDisplay={fromDisplay} t={t} fontSize={24} />
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ marginTop: 12, height: 16, borderRadius: 999, background: t.line, overflow: "hidden" }}>
+                      <div style={{ width: `${Math.min(pct * 100, 100)}%`, height: "100%", background: over ? t.warn : pct > 0.85 ? "#D49255" : t.good, borderRadius: 999 }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        </div>
+      );
+    }
+
+    function StretchView({ t, fontHead, data, currency, money, toDisplay, fromDisplay, cushion, setData, extraHours, setExtraHours, extraGroceries, setExtraGroceries }) {
+      const cardBase = { background: t.panel, borderRadius: 22, padding: "22px 24px", border: `1.5px solid ${t.line}`, boxShadow: "0 6px 20px rgba(0,0,0,0.05)" };
+      const baseMonthly = Math.max(cushion, 0);
+      const extraMonthly = extraHours * data.hourlyRate + extraGroceries;
+      const boostedMonthly = baseMonthly + extraMonthly;
+
+      const periods = [3, 6, 12];
+      const chartData = periods.map((m) => ({
+        name: `${m} mo`,
+        Current: Math.round(toDisplay(baseMonthly * m)),
+        Boosted: Math.round(toDisplay(boostedMonthly * m)),
+      }));
+
+      return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+          <section style={cardBase}>
+            <h2 style={{ fontFamily: fontHead, fontSize: 26, fontWeight: 700, margin: "0 0 4px" }}>Small changes, big comfort</h2>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 18, color: t.inkSoft, marginBottom: 22 }}>
+              <Clock size={20} color={t.accent} /> You earn about
+              <MoneyInput cad={data.hourlyRate} onChangeCad={(v) => setData((d) => ({ ...d, hourlyRate: v }))} toDisplay={toDisplay} fromDisplay={fromDisplay} t={t} fontSize={22} />
+              <span>/hr part-time.</span>
+            </div>
+            <div style={{ marginBottom: 26 }}>
+              <label style={{ fontSize: 19, fontWeight: 700, display: "block", marginBottom: 10 }}>Extra <span style={{ color: t.accent }}>{extraHours} hours</span> this month…</label>
+              <input type="range" min={0} max={15} step={1} value={extraHours} onChange={(e) => setExtraHours(+e.target.value)} style={{ width: "100%" }} />
+            </div>
+            <div>
+              <label style={{ fontSize: 19, fontWeight: 700, display: "block", marginBottom: 10 }}>Save <span style={{ color: t.accent }}>{money(extraGroceries)}</span> on groceries…</label>
+              <input type="range" min={0} max={200} step={5} value={extraGroceries} onChange={(e) => setExtraGroceries(+e.target.value)} style={{ width: "100%" }} />
+            </div>
+          </section>
+
+          <section style={cardBase}>
+            <h3 style={{ fontFamily: fontHead, fontSize: 22, fontWeight: 700, margin: "0 0 4px" }}>How your savings grow</h3>
+            <div style={{ width: "100%", height: 300 }}>
+              <ResponsiveContainer>
+                <BarChart data={chartData} margin={{ top: 20, right: 10, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={t.line} vertical={false} />
+                  <XAxis dataKey="name" tick={{ fill: t.ink, fontWeight: 700 }} />
+                  <YAxis tick={{ fill: t.inkSoft }} axisLine={false} />
+                  <Legend />
+                  <Bar dataKey="Current" name="Normal pace" fill={t.bars[0]} radius={[4, 4, 0, 0]}>
+                    <LabelList dataKey="Current" position="top" style={{ fill: t.inkSoft, fontSize: 12 }} />
+                  </Bar>
+                  <Bar dataKey="Boosted" name="With extra effort" fill={t.bars[1]} radius={[4, 4, 0, 0]}>
+                    <LabelList dataKey="Boosted" position="top" style={{ fill: t.ink, fontSize: 13, fontWeight: 700 }} />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </section>
+        </div>
+      );
+    }
+
+    function LogModal({ t, fontHead, data, currency, toDisplay, fromDisplay, onClose, onAdd }) {
+      const usable = data.expenses.filter((e) => e.enabled);
+      const [cat, setCat] = useState(usable[0]?.id || data.expenses[0]?.id);
+      const [entry, setEntry] = useState("");
+
+      const press = (k) => {
+        if (k === "del") return setEntry((s) => s.slice(0, -1));
+        if (k === "." && entry.includes(".")) return;
+        setEntry((s) => s + k);
+      };
+
+      const amount = parseFloat(entry) || 0;
+      const keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0", "del"];
+
+      return (
+        <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(20,12,6,0.55)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 50, padding: 12 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: t.panel, borderRadius: 26, padding: 22, width: "100%", maxWidth: 440, border: `1.5px solid ${t.line}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <h3 style={{ fontFamily: fontHead, fontSize: 24, fontWeight: 700 }}>Log an Expense</h3>
+              <button onClick={onClose} style={{ border: "none", background: "transparent", cursor: "pointer" }}><X size={24} /></button>
+            </div>
+            <div style={{ background: t.panelAlt, borderRadius: 16, padding: "16px", textAlign: "center", marginBottom: 14 }}>
+              <div style={{ fontSize: 42, fontWeight: 700 }}>${entry === "" ? "0" : entry}</div>
+            </div>
+            <select value={cat} onChange={(e) => setCat(e.target.value)} style={{ width: "100%", minHeight: 50, borderRadius: 12, marginBottom: 14 }}>
+              {usable.map((e) => <option key={e.id} value={e.id}>{e.label}</option>)}
+            </select>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 14 }}>
+              {keys.map((k) => (
+                <button key={k} onClick={() => press(k)} style={{ minHeight: 50, fontSize: 20, borderRadius: 12 }}>{k === "del" ? "←" : k}</button>
+              ))}
+            </div>
+            <button disabled={amount <= 0} onClick={() => onAdd(cat, fromDisplay(amount))} style={{ width: "100%", minHeight: 50, background: amount > 0 ? t.accent : t.line, color: "#fff", borderRadius: 12, fontWeight: 700 }}>Confirm</button>
+          </div>
+        </div>
+      );
+    }
+
+    const container = document.getElementById('root');
+    const root = ReactDOM.createRoot(container);
+    root.render(<App />);
+  </script>
+</body>
+</html>
